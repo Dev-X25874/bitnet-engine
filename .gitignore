@@ -1,0 +1,14 @@
+/target
+Cargo.lock
+**/*.o
+**/*.a
+**/*.so
+**/*.ptx
+**/*.nsys-rep
+*.safetensors
+*.bin
+*.pth
+/model/
+__pycache__/
+*.pyc
+.env

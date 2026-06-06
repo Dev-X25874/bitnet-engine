@@ -1,0 +1,66 @@
+[package]
+name        = "bitnet-engine"
+version     = "0.1.0"
+edition     = "2021"
+authors     = ["BitNet Engine Contributors"]
+description = "1-Bit / 1.58-Bit quantization-native LLM inference engine"
+license     = "Apache-2.0"
+repository  = "https://github.com/your-org/bitnet-engine"
+
+[[bin]]
+name = "bitnet-cli"
+path = "src/main.rs"
+
+[lib]
+name = "bitnet"
+path = "src/lib.rs"
+
+[[bench]]
+name    = "gemv_bench"
+harness = false
+
+[dependencies]
+anyhow        = "1.0"
+thiserror     = "1.0"
+log           = "0.4"
+env_logger    = "0.11"
+clap          = { version = "4.4", features = ["derive"] }
+serde         = { version = "1.0", features = ["derive"] }
+serde_json    = "1.0"
+bytemuck      = { version = "1.14", features = ["derive"] }
+half          = { version = "2.3", features = ["bytemuck"] }
+rayon         = "1.8"
+parking_lot   = "0.12"
+memmap2       = "0.9"
+safetensors   = "0.4"
+tokenizers    = "0.15"
+indicatif     = "0.17"
+num_cpus      = "1.16"
+
+[dependencies.cudarc]
+version  = "0.10"
+optional = true
+
+[features]
+default   = ["cpu"]
+cpu       = []
+cuda      = ["dep:cudarc"]
+avx512    = []
+neon      = []
+
+[dev-dependencies]
+criterion  = { version = "0.5", features = ["html_reports"] }
+approx     = "0.5"
+rand       = "0.8"
+proptest   = "1.4"
+
+[profile.release]
+opt-level       = 3
+lto             = "fat"
+codegen-units   = 1
+panic           = "abort"
+strip           = "symbols"
+
+[profile.bench]
+inherits  = "release"
+debug     = true
