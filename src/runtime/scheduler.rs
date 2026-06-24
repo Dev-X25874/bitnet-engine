@@ -15,6 +15,10 @@ pub struct Request {
     pub max_new: usize,
     pub state:   RequestState,
     pub gen_len: usize,
+    /// Blocks reserved at scheduling time (worst-case prompt + max_new budget).
+    /// Stored here so finish() and preempt() return exactly what step() took,
+    /// regardless of how many tokens were actually generated.
+    pub reserved_blocks: usize,
 }
 
 pub struct Scheduler {
@@ -22,21 +26,21 @@ pub struct Scheduler {
     running:          Vec<Request>,
     max_batch:        usize,
     free_blocks:      usize,
-    blocks_per_token: usize,
+    block_size:       usize,
 }
 
 impl Scheduler {
     pub fn new(
-        max_batch:        usize,
-        total_blocks:     usize,
-        blocks_per_token: usize,
+        max_batch:   usize,
+        total_blocks: usize,
+        block_size:  usize,
     ) -> Self {
         Self {
             waiting: VecDeque::new(),
             running: Vec::new(),
             max_batch,
             free_blocks: total_blocks,
-            blocks_per_token,
+            block_size,
         }
     }
 
@@ -47,9 +51,11 @@ impl Scheduler {
     pub fn step(&mut self) -> Vec<u64> {
         while self.running.len() < self.max_batch {
             if let Some(mut req) = self.waiting.pop_front() {
-                let blocks_needed = (req.tokens.len() + req.max_new) / 16 + 1;
+                // Budget for worst-case sequence length (prompt + all new tokens).
+                let blocks_needed = (req.tokens.len() + req.max_new) / self.block_size + 1;
                 if self.free_blocks >= blocks_needed {
                     self.free_blocks -= blocks_needed;
+                    req.reserved_blocks = blocks_needed;
                     req.state = RequestState::Running;
                     self.running.push(req);
                 } else {
@@ -66,16 +72,16 @@ impl Scheduler {
     pub fn finish(&mut self, id: u64) {
         if let Some(pos) = self.running.iter().position(|r| r.id == id) {
             let req = self.running.remove(pos);
-            let blocks = (req.tokens.len() + req.gen_len) / 16 + 1;
-            self.free_blocks += blocks;
+            // Return the exact block budget reserved at scheduling time.
+            self.free_blocks += req.reserved_blocks;
         }
     }
 
     pub fn preempt(&mut self, id: u64) {
         if let Some(pos) = self.running.iter().position(|r| r.id == id) {
             let mut req = self.running.remove(pos);
-            let blocks  = (req.tokens.len() + req.gen_len) / 16 + 1;
-            self.free_blocks += blocks;
+            self.free_blocks += req.reserved_blocks;
+            req.reserved_blocks = 0;
             req.state = RequestState::Preempted;
             self.waiting.push_front(req);
         }
