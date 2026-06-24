@@ -62,7 +62,7 @@ fn bytes_to_f32(data: &[u8], dtype: safetensors::Dtype) -> Result<Vec<f32>> {
             })
             .collect()),
         I8 => Ok(data.iter()
-            .map(|&b| if b as i8 >= 0 { 1.0 } else { -1.0 })
+            .map(|&b| (b as i8) as f32)
             .collect()),
         other => Err(BitNetError::ModelLoad(
             format!("Unsupported dtype {:?}", other)
