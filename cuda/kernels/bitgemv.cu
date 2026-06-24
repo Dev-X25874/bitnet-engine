@@ -17,8 +17,10 @@ __global__ void pack_activations_fp16(
         uint16_t raw;
         __half v = x[base + b];
         memcpy(&raw, &v, sizeof(raw));
-        uint64_t sign = (raw >> 15) & 1ULL;
-        word |= (sign << b);
+        // sign bit=0 means positive in fp16; set the packed bit for positive values
+        // to match the CPU quantise_activation convention (bit=1 ↔ v >= 0).
+        uint64_t positive = ((raw >> 15) ^ 1ULL) & 1ULL;
+        word |= (positive << b);
     }
     x_pack[word_idx] = word;
 }
