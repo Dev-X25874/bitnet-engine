@@ -112,13 +112,21 @@ fn top_p_sample(probs: &[f32], p: f32) -> u32 {
         .collect();
     indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-    let mut cumsum   = 0.0f32;
-    let threshold    = rand_f32() * p.min(1.0);
+    let mut cumsum = 0.0f32;
+    // Draw a uniform sample in [0, 1); stop when the cumulative probability
+    // of the nucleus prefix first exceeds it.  p just controls the *size*
+    // of the nucleus (we stop filling it early once cumsum >= p), not the
+    // sampling threshold itself.
+    let u = rand_f32();
 
     for (idx, prob) in &indexed {
         cumsum += prob;
-        if cumsum >= threshold {
+        if cumsum >= u {
             return *idx as u32;
+        }
+        // Hard nucleus cutoff: don't sample below the p-th percentile.
+        if cumsum >= p.min(1.0) {
+            break;
         }
     }
     indexed.last().map(|(i, _)| *i as u32).unwrap_or(0)
@@ -126,12 +134,16 @@ fn top_p_sample(probs: &[f32], p: f32) -> u32 {
 
 fn rand_f32() -> f32 {
     use std::sync::atomic::{AtomicU64, Ordering};
+    // splitmix64: increment by the golden-ratio Weyl constant, then mix.
     static STATE: AtomicU64 = AtomicU64::new(0x4d595df4d0f33173);
-    let s = STATE.fetch_add(0x6c62272e07bb0142, Ordering::Relaxed);
-    let s = s ^ (s >> 30);
-    let s = s.wrapping_mul(0xbf58476d1ce4e5b9);
-    let s = s ^ (s >> 27);
-    let s = s.wrapping_mul(0x94d049bb133111eb);
-    let s = s ^ (s >> 31);
-    (s as f32) / (u64::MAX as f32)
+    let mut s = STATE.fetch_add(0x9e3779b97f4a7c15, Ordering::Relaxed);
+    // Mix the post-increment value (fetch_add returns the old value, so add manually).
+    s = s.wrapping_add(0x9e3779b97f4a7c15);
+    s ^= s >> 30;
+    s = s.wrapping_mul(0xbf58476d1ce4e5b9);
+    s ^= s >> 27;
+    s = s.wrapping_mul(0x94d049bb133111eb);
+    s ^= s >> 31;
+    // Map to [0, 1) by taking the upper 53 bits (avoids float precision issues).
+    (s >> 11) as f32 / (1u64 << 53) as f32
 }
