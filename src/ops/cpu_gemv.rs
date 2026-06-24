@@ -20,12 +20,12 @@ pub fn bitgemv_cpu(
 
 fn binary_gemv(w: &PackedMatrix, x_packed: &[u64], x_scale: f32, y: &mut [f32]) {
     let k              = w.words_per_row;
-    let total_bits     = w.cols as i32;
+    let total_bits     = w.cols as i64;
     let combined_scale = w.scale * x_scale;
 
     y.par_iter_mut().enumerate().for_each(|(row, out)| {
         let w_row = &w.mag[row * k..(row + 1) * k];
-        let dot   = dot_binary(w_row, x_packed);
+        let dot   = dot_binary(w_row, x_packed) as i64;
         *out += combined_scale * (2 * dot - total_bits) as f32;
     });
 }
