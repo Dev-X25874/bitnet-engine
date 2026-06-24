@@ -34,11 +34,14 @@ __global__ void bitnet_attention(
     extern __shared__ char smem[];
     uint64_t* sk = reinterpret_cast<uint64_t*>(smem);
     __half*   sv = reinterpret_cast<__half*>(sk + SEQ_BLOCK * HEAD_DIM_WORDS);
+    // ss needs SEQ_BLOCK slots for scores plus 2 extra for broadcasting
+    // the rescale factor and updated d after the online softmax update.
     float*    ss = reinterpret_cast<float*>(sv + SEQ_BLOCK * (HEAD_DIM_BITS / 8));
 
     float m = -FLT_MAX;
     float d = 0.f;
-    float o_acc[HEAD_DIM_BITS / 8 / sizeof(float)] = {};
+    // HEAD_DIM_BITS/8 = 64 floats needed — use the correct element count.
+    float o_acc[HEAD_DIM_BITS / 8] = {};
 
     for (int tile_start = 0; tile_start < T; tile_start += SEQ_BLOCK) {
         int tile_end = min(tile_start + SEQ_BLOCK, T);
@@ -74,25 +77,34 @@ __global__ void bitnet_attention(
         }
         __syncthreads();
 
-        if (warp_id == 0) {
+        // Online softmax update — compute on warp 0, then broadcast via smem.
+        if (threadIdx.x == 0) {
             float m_new = m;
             for (int ki = 0; ki < tile_len; ++ki)
                 m_new = fmaxf(m_new, ss[ki]);
 
-            float d_new = d * expf(m - m_new);
+            float rescale = expf(m - m_new);
+            float d_new = d * rescale;
             for (int ki = 0; ki < tile_len; ++ki) {
                 float p = expf(ss[ki] - m_new);
                 ss[ki]  = p;
                 d_new  += p;
             }
-
-            float rescale = expf(m - m_new);
-            for (int dim = lane; dim < HEAD_DIM_BITS / 8; dim += WARP_SIZE)
-                o_acc[dim] *= rescale;
-
+            // Store updated scalars in the last two smem float slots so all
+            // threads can read them after the syncthreads below.
+            ss[SEQ_BLOCK]     = rescale;
+            ss[SEQ_BLOCK + 1] = d_new;
             m = m_new;
             d = d_new;
         }
+        __syncthreads();
+
+        // All threads rescale their o_acc by the same factor.
+        float rescale_bc = ss[SEQ_BLOCK];
+        for (int dim = threadIdx.x; dim < HEAD_DIM_BITS / 8; dim += blockDim.x)
+            o_acc[dim] *= rescale_bc;
+
+        // Sync so ss[] is safe to overwrite in the next V accumulation pass.
         __syncthreads();
 
         for (int ki = 0; ki < tile_len; ++ki) {
