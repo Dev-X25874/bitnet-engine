@@ -76,7 +76,15 @@ impl KvCache {
     }
 
     pub fn extend_session(&mut self, sid: usize) -> Option<usize> {
+        // Only consume a block if the session slot actually exists.
+        // Popping first and then checking risks losing the block if the
+        // session is unallocated.
+        match self.session_tables.get(sid) {
+            Some(Some(_)) => {}
+            _ => return None,
+        }
         let block_id = self.free_blocks.pop()?;
+        // Safety: we verified the slot above and no other mutable borrow exists.
         if let Some(Some(table)) = self.session_tables.get_mut(sid) {
             table.push(block_id);
         }
